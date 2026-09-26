@@ -7,17 +7,28 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+use core::net::Ipv4Addr;
+
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_futures::select::{select, Either};
+use embassy_net::Stack;
+use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Pin;
+use esp_hal::ram;
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hub75::{Hub75, Hub75Config, Hub75Pins16};
 use log::info;
 use makit64::board::{self, PANEL_HEIGHT, PANEL_WIDTH};
-use makit64::welcome::{self, FrameBuffer, WelcomePhase};
+use makit64::frame::{FrameInbox, FRAME_BYTES};
+use makit64::net::{
+    self, coap_task, mdns_task, wifi_ssid_short, WifiPhase, HOSTNAME,
+};
+use makit64::scene;
+use makit64::welcome::FrameBuffer;
+use static_cell::StaticCell;
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -33,6 +44,9 @@ esp_bootloader_esp_idf::esp_app_desc!();
 /// Pixel clock — 20 MHz is the recommended ESP32-S3 starting point for 64×64.
 const PIXEL_CLOCK: Rate = Rate::from_mhz(20);
 
+static FRAME_INBOX: StaticCell<FrameInbox> = StaticCell::new();
+static DISPLAY_RGB: StaticCell<[u8; FRAME_BYTES]> = StaticCell::new();
+
 #[allow(
     clippy::large_stack_frames,
     reason = "framebuffers and Hub75 state live in main"
@@ -44,16 +58,24 @@ async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    // Wi-Fi / CoAP need a heap (`coap-lite`, `esp-radio`). Prefer bootloader-
+    // reclaimed dram2 so the 64 KiB does not squeeze the main stack in dram_seg.
+    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 32 * 1024);
+
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     info!(
-        "makit64 — {}x{} HUB75E welcome (refresh ~{} Hz @ {} MHz)",
+        "makit64 — {}x{} HUB75E + Wi-Fi/CoAP (refresh ~{} Hz @ {} MHz)",
         PANEL_WIDTH,
         PANEL_HEIGHT,
         esp_hub75::refresh_hz::<FrameBuffer>(PIXEL_CLOCK),
         PIXEL_CLOCK.as_hz() / 1_000_000,
     );
+
+    let inbox = FRAME_INBOX.init(FrameInbox::new());
+    let rgb = DISPLAY_RGB.init([0u8; FRAME_BYTES]);
 
     let fb0 = mk_static!(FrameBuffer, FrameBuffer::new());
     let fb1 = mk_static!(FrameBuffer, FrameBuffer::new());
@@ -78,7 +100,7 @@ async fn main(spawner: Spawner) -> ! {
         latch: peripherals.GPIO47.degrade(),
     };
 
-    let hub75 = Hub75::new_async(
+    let mut hub75 = Hub75::new_async(
         peripherals.LCD_CAM,
         pins,
         peripherals.DMA_CH0,
@@ -88,49 +110,129 @@ async fn main(spawner: Spawner) -> ! {
     )
     .expect("Hub75 init failed");
 
-    let _ = spawner;
     let _ = board::ui::LED_D13;
 
-    run_welcome(hub75, fb1).await
+    // Show progress on the panel before (and during) DHCP — no serial needed.
+    let mut fb: &'static mut FrameBuffer = fb1;
+    scene::draw_status_lines(fb, "boot", "makit64");
+    fb = swap_fb(&mut hub75, fb).await;
+
+    let stack = net::spawn_network(&spawner, peripherals.WIFI);
+    let (hub75, fb, ipv4) = wait_dhcp_with_status(hub75, fb, stack).await;
+
+    spawner
+        .spawn(coap_task(stack, inbox).expect("spawn coap_task"));
+    spawner
+        .spawn(mdns_task(stack, ipv4).expect("spawn mdns_task"));
+
+    run_display(hub75, fb, inbox, rgb, ipv4).await
 }
 
-async fn run_welcome(
-    hub75: Hub75<esp_hal::Async, FrameBuffer>,
-    mut fb: &'static mut FrameBuffer,
-) -> ! {
-    let mut phase = WelcomePhase::Red;
-    let mut phase_started = Instant::now();
-    let mut hue: u8 = 0;
-
-    info!("welcome: {}", phase.name());
-    welcome::draw_welcome(fb, phase, hue);
+async fn swap_fb(
+    hub75: &mut Hub75<esp_hal::Async, FrameBuffer>,
+    fb: &'static mut FrameBuffer,
+) -> &'static mut FrameBuffer {
     let mut xfer = hub75.swap(fb).expect("swap");
     xfer.wait_for_done().await;
-    fb = xfer.wait().expect("dma");
+    xfer.wait().expect("dma")
+}
+
+/// Redraw Wi‑Fi / DHCP phase on the panel until an IPv4 address appears.
+#[allow(
+    clippy::large_stack_frames,
+    reason = "Hub75 + FB live across the wait loop"
+)]
+async fn wait_dhcp_with_status(
+    mut hub75: Hub75<esp_hal::Async, FrameBuffer>,
+    mut fb: &'static mut FrameBuffer,
+    stack: Stack<'static>,
+) -> (
+    Hub75<esp_hal::Async, FrameBuffer>,
+    &'static mut FrameBuffer,
+    Ipv4Addr,
+) {
+    let ssid = wifi_ssid_short();
+    let mut last_title = "";
 
     loop {
-        if phase_started.elapsed() >= WelcomePhase::HOLD {
-            phase = phase.next();
-            phase_started = Instant::now();
-            info!("welcome: {}", phase.name());
+        if let Some(cfg) = stack.config_v4() {
+            let ipv4 = cfg.address.address();
+            info!("wifi: up, ip={ipv4} hostname={HOSTNAME}.local");
+            scene::draw_net_status(fb, ipv4);
+            fb = swap_fb(&mut hub75, fb).await;
+            return (hub75, fb, ipv4);
         }
 
-        if phase == WelcomePhase::Rainbow {
-            hue = hue.wrapping_add(3);
-        }
-
-        welcome::draw_welcome(fb, phase, hue);
-        let mut xfer = hub75.swap(fb).expect("swap");
-        xfer.wait_for_done().await;
-        fb = xfer.wait().expect("dma");
-
-        // Solid colours only need occasional updates; rainbow wants a steady
-        // but not max-rate redraw so the hue scroll is visible.
-        let delay = if phase == WelcomePhase::Rainbow {
-            Duration::from_millis(30)
-        } else {
-            Duration::from_millis(100)
+        let (title, detail) = match WifiPhase::load() {
+            WifiPhase::Starting => ("wifi", ssid),
+            WifiPhase::Connecting => ("wifi", ssid),
+            WifiPhase::Retrying => ("retry", ssid),
+            WifiPhase::Connected => {
+                if stack.is_link_up() {
+                    ("dhcp", ssid)
+                } else {
+                    ("wifi", ssid)
+                }
+            }
         };
-        Timer::after(delay).await;
+
+        if title != last_title {
+            info!("display: status {title} ({detail})");
+            last_title = title;
+        }
+        scene::draw_status_lines(fb, title, detail);
+        fb = swap_fb(&mut hub75, fb).await;
+
+        Timer::after(Duration::from_millis(400)).await;
+    }
+}
+
+#[allow(
+    clippy::large_stack_frames,
+    reason = "async state machine for Hub75 swap + select"
+)]
+async fn run_display(
+    mut hub75: Hub75<esp_hal::Async, FrameBuffer>,
+    mut fb: &'static mut FrameBuffer,
+    inbox: &'static FrameInbox,
+    rgb: &'static mut [u8; FRAME_BYTES],
+    ipv4: Ipv4Addr,
+) -> ! {
+    let mut showing_frame = false;
+
+    info!("display: showing {HOSTNAME}.local / {ipv4} until first CoAP PUT /frame");
+    scene::draw_net_status(fb, ipv4);
+    fb = swap_fb(&mut hub75, fb).await;
+
+    loop {
+        if showing_frame {
+            match select(inbox.wait_copy_into(rgb), Timer::after(Duration::from_secs(30)))
+                .await
+            {
+                Either::First(()) | Either::Second(()) => {
+                    scene::draw_rgb888(fb, rgb);
+                    fb = swap_fb(&mut hub75, fb).await;
+                }
+            }
+            continue;
+        }
+
+        match select(
+            inbox.wait_copy_into(rgb),
+            Timer::after(Duration::from_secs(5)),
+        )
+        .await
+        {
+            Either::First(()) => {
+                info!("display: network frame — leaving status");
+                showing_frame = true;
+                scene::draw_rgb888(fb, rgb);
+                fb = swap_fb(&mut hub75, fb).await;
+            }
+            Either::Second(()) => {
+                scene::draw_net_status(fb, ipv4);
+                fb = swap_fb(&mut hub75, fb).await;
+            }
+        }
     }
 }

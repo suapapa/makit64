@@ -6,18 +6,25 @@ ESP32-S3 firmware for a **HUB75E 64×64** LED matrix (`LED_metrix_mcu_ver_rev.1`
 - Schematic: [`sch/sch.png`](sch/sch.png)
 - Pin constants: [`src/board.rs`](src/board.rs)
 - Agent guide: [`AGENTS.md`](AGENTS.md)
+- Network plan: [`docs/PLAN-wifi-coap.md`](docs/PLAN-wifi-coap.md)
 
 ## Toolchain
 
-Generated with [`esp-generate`](https://github.com/esp-rs/esp-generate) (successor to the deprecated `cargo generate` + `esp-rs/esp-template`):
-
-```bash
-esp-generate --headless --chip esp32s3 \
-  -o alloc -o unstable-hal -o embassy -o log -o esp-backtrace -o vscode \
-  makit64
-```
+Generated with [`esp-generate`](https://github.com/esp-rs/esp-generate) (successor to the deprecated `cargo generate` + `esp-rs/esp-template`).
 
 Requires the Espressif Rust toolchain (`espup`) and `espflash`.
+
+## Wi-Fi credentials
+
+Copy the example env file and fill in your LAN AP:
+
+```bash
+cp .env.example .env
+# edit WIFI_SSID / WIFI_PASS
+```
+
+Credentials are baked in at **compile time** via `build.rs` (`env!("WIFI_SSID")` / `env!("WIFI_PASS")`).  
+`.env` is gitignored — never commit it.
 
 ## Build & flash
 
@@ -26,10 +33,24 @@ cargo build --release
 cargo run --release
 ```
 
-## Current status
+After flash the panel shows bring-up text (`boot` → `wifi` / `retry` → `dhcp`),
+then **`makit.local`** and the assigned IPv4. Serial also prints them. mDNS answers
+A queries for `makit.local`.
 
-Welcome loop: **Red → Green → Blue → Rainbow** via `esp-hub75` (LCD_CAM DMA).
+## Push an image (CoAP PUT)
+
+Status text stays until the first frame arrives.
 
 ```bash
-cargo run --release
+pip install pillow aiocoap
+python tools/put_frame.py tools/tiger.png                  # → makit.local
+python tools/put_frame.py -H 192.168.x.y your.png          # direct IP
 ```
+
+- Endpoint: `coap://makit.local:5683/frame` (or the panel IP)
+- Body: raw **64×64 RGB888** (12 288 bytes), Block1 for chunking
+- Success: CoAP `2.04 Changed`
+
+## Current status
+
+- HUB75 DMA + Wi-Fi STA + mDNS (`makit.local`) + CoAP `PUT /frame`

@@ -2,6 +2,9 @@
 debug/
 target/
 
+# Local Wi-Fi / secrets (see `.env.example`)
+.env
+
 # Editor configuration
 .vscode/
 .zed/
