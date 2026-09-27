@@ -116,6 +116,8 @@ Do not switch this crate to host `stable` for firmware builds.
   `dhcp` plus a truncated SSID (`WifiPhase` in `src/net/wifi.rs`).
 - Screen update: CoAP **`PUT /frame`** over **UDP :5683**, RGB888 64×64 with
   Block1. Host tool: `tools/put_frame.py` (default host `makit.local`).
+- Brightness: CoAP **`GET|PUT /brightness`** (`0`–`255`); host tool
+  `tools/set_brightness.py`. Scales pixels at draw time.
 - See [`docs/PLAN-wifi-coap.md`](docs/PLAN-wifi-coap.md).
 - After enabling Wi-Fi, re-check panel flicker (IRAM / DMA contention).
 

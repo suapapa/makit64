@@ -1,4 +1,4 @@
-//! CoAP UDP server: `PUT /frame` (RGB888 + Block1).
+//! CoAP UDP server: `PUT /frame` (RGB888 + Block1), `GET|PUT /brightness`.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -12,6 +12,7 @@ use embassy_net::Stack;
 use embassy_time::{Duration, Instant};
 use log::{info, warn};
 
+use crate::brightness::Brightness;
 use crate::frame::{FrameInbox, FRAME_BYTES};
 use crate::net::block1::BlockValue;
 
@@ -76,7 +77,11 @@ static ASSEMBLE_BUF: static_cell::StaticCell<[u8; FRAME_BYTES]> = static_cell::S
 static PUBLISH_BUF: static_cell::StaticCell<[u8; FRAME_BYTES]> = static_cell::StaticCell::new();
 
 #[embassy_executor::task]
-pub async fn coap_task(stack: Stack<'static>, inbox: &'static FrameInbox) -> ! {
+pub async fn coap_task(
+    stack: Stack<'static>,
+    inbox: &'static FrameInbox,
+    brightness: &'static Brightness,
+) -> ! {
     let mut rx_meta = [PacketMetadata::EMPTY; 4];
     let mut rx_buffer = [0u8; 1536];
     let mut tx_meta = [PacketMetadata::EMPTY; 4];
@@ -90,7 +95,7 @@ pub async fn coap_task(stack: Stack<'static>, inbox: &'static FrameInbox) -> ! {
         &mut tx_buffer,
     );
     socket.bind(COAP_PORT).expect("CoAP bind");
-    info!("coap: listening on UDP :{COAP_PORT}  PUT /frame");
+    info!("coap: listening on UDP :{COAP_PORT}  PUT /frame  GET|PUT /brightness");
 
     let assemble = ASSEMBLE_BUF.init([0u8; FRAME_BYTES]);
     let publish = PUBLISH_BUF.init([0u8; FRAME_BYTES]);
@@ -127,6 +132,8 @@ pub async fn coap_task(stack: Stack<'static>, inbox: &'static FrameInbox) -> ! {
                 handle_put_frame(&mut request, &mut assembler, publish, inbox).await
             }
             (RequestType::Get, "frame") => handle_get_frame(&mut request, inbox),
+            (RequestType::Get, "brightness") => handle_get_brightness(&mut request, brightness),
+            (RequestType::Put, "brightness") => handle_put_brightness(&mut request, brightness),
             _ => {
                 set_code(&mut request, ResponseType::NotFound);
                 request.response.take()
@@ -151,8 +158,10 @@ fn handle_well_known(
 ) -> Option<coap_lite::CoapResponse> {
     set_code(request, ResponseType::Content);
     if let Some(ref mut resp) = request.response {
-        resp.message.payload =
-            b"</frame>;rt=\"makit64.frame\";sz=12288,</.well-known/core>".to_vec();
+        resp.message.payload = b"</frame>;rt=\"makit64.frame\";sz=12288,\
+</brightness>;rt=\"makit64.brightness\",\
+</.well-known/core>"
+            .to_vec();
     }
     request.response.take()
 }
@@ -173,6 +182,85 @@ fn handle_get_frame(
         }
     }
     request.response.take()
+}
+
+fn handle_get_brightness(
+    request: &mut CoapRequest<SocketAddr>,
+    brightness: &Brightness,
+) -> Option<coap_lite::CoapResponse> {
+    set_code(request, ResponseType::Content);
+    if let Some(ref mut resp) = request.response {
+        let mut buf = [0u8; 3];
+        let s = write_u8_decimal(&mut buf, brightness.get());
+        resp.message.payload = s.to_vec();
+    }
+    request.response.take()
+}
+
+fn handle_put_brightness(
+    request: &mut CoapRequest<SocketAddr>,
+    brightness: &Brightness,
+) -> Option<coap_lite::CoapResponse> {
+    match parse_brightness_payload(&request.message.payload) {
+        Some(level) => {
+            brightness.set(level);
+            info!("coap: brightness={level}");
+            set_code(request, ResponseType::Changed);
+            if let Some(ref mut resp) = request.response {
+                let mut buf = [0u8; 3];
+                let s = write_u8_decimal(&mut buf, level);
+                resp.message.payload = s.to_vec();
+            }
+        }
+        None => {
+            warn!(
+                "coap: PUT /brightness bad payload (len={})",
+                request.message.payload.len()
+            );
+            set_code(request, ResponseType::BadRequest);
+            if let Some(ref mut resp) = request.response {
+                resp.message.payload = b"expected 0-255 (1 byte or ascii)".to_vec();
+            }
+        }
+    }
+    request.response.take()
+}
+
+/// Accept a single binary byte `0..=255`, or ASCII decimal `"0"`…`"255"`.
+fn parse_brightness_payload(payload: &[u8]) -> Option<u8> {
+    if payload.len() == 1 && !payload[0].is_ascii_digit() {
+        return Some(payload[0]);
+    }
+    if payload.is_empty() || payload.len() > 3 {
+        return None;
+    }
+    let mut n: u16 = 0;
+    for &b in payload {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        n = n * 10 + u16::from(b - b'0');
+        if n > 255 {
+            return None;
+        }
+    }
+    Some(n as u8)
+}
+
+fn write_u8_decimal(buf: &mut [u8; 3], n: u8) -> &[u8] {
+    if n >= 100 {
+        buf[0] = b'0' + n / 100;
+        buf[1] = b'0' + (n / 10) % 10;
+        buf[2] = b'0' + n % 10;
+        &buf[..3]
+    } else if n >= 10 {
+        buf[0] = b'0' + n / 10;
+        buf[1] = b'0' + n % 10;
+        &buf[..2]
+    } else {
+        buf[0] = b'0' + n;
+        &buf[..1]
+    }
 }
 
 async fn handle_put_frame(

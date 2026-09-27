@@ -67,6 +67,18 @@ python tools/put_frame.py -H 192.168.x.y your.png          # direct IP
 - Body: raw **64×64 RGB888** (12 288 bytes), Block1 for chunking
 - Success: CoAP `2.04 Changed`
 
+## Brightness (CoAP)
+
+```bash
+python tools/set_brightness.py              # GET current (0–255)
+python tools/set_brightness.py 128          # PUT dim to ~50%
+python tools/set_brightness.py -H 192.168.x.y 255
+```
+
+- Endpoint: `coap://makit.local:5683/brightness`
+- Payload: ASCII decimal `0`–`255` (or a single binary byte)
+- Scales RGB when drawing; applies immediately (no need to re-PUT the frame)
+
 ## Current status
 
-- HUB75 DMA + Wi-Fi STA + mDNS (`makit.local`) + CoAP `PUT /frame`
+- HUB75 DMA + Wi-Fi STA + mDNS (`makit.local`) + CoAP `PUT /frame` + `GET|PUT /brightness`

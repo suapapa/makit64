@@ -10,7 +10,7 @@
 use core::net::Ipv4Addr;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select3, Either3};
 use embassy_net::Stack;
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
@@ -22,6 +22,7 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_hub75::{Hub75, Hub75Config, Hub75Pins16};
 use log::info;
 use makit64::board::{self, PANEL_HEIGHT, PANEL_WIDTH};
+use makit64::brightness::Brightness;
 use makit64::frame::{FrameInbox, FRAME_BYTES};
 use makit64::net::{
     self, coap_task, mdns_task, wifi_ssid_short, WifiPhase, HOSTNAME,
@@ -45,6 +46,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 const PIXEL_CLOCK: Rate = Rate::from_mhz(20);
 
 static FRAME_INBOX: StaticCell<FrameInbox> = StaticCell::new();
+static BRIGHTNESS: StaticCell<Brightness> = StaticCell::new();
 static DISPLAY_RGB: StaticCell<[u8; FRAME_BYTES]> = StaticCell::new();
 
 #[allow(
@@ -76,6 +78,7 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let inbox = FRAME_INBOX.init(FrameInbox::new());
+    let brightness = BRIGHTNESS.init(Brightness::default());
     let rgb = DISPLAY_RGB.init([0u8; FRAME_BYTES]);
 
     let fb0 = mk_static!(FrameBuffer, FrameBuffer::new());
@@ -122,11 +125,11 @@ async fn main(spawner: Spawner) -> ! {
     let (hub75, fb, ipv4) = wait_dhcp_with_status(hub75, fb, stack).await;
 
     spawner
-        .spawn(coap_task(stack, inbox).expect("spawn coap_task"));
+        .spawn(coap_task(stack, inbox, brightness).expect("spawn coap_task"));
     spawner
         .spawn(mdns_task(stack, ipv4).expect("spawn mdns_task"));
 
-    run_display(hub75, fb, inbox, rgb, ipv4).await
+    run_display(hub75, fb, inbox, brightness, rgb, ipv4).await
 }
 
 async fn swap_fb(
@@ -159,7 +162,7 @@ async fn wait_dhcp_with_status(
         if let Some(cfg) = stack.config_v4() {
             let ipv4 = cfg.address.address();
             info!("wifi: up, ip={ipv4} hostname={HOSTNAME}.local");
-            scene::draw_net_status(fb, ipv4);
+            scene::draw_net_status(fb, ipv4, makit64::brightness::DEFAULT);
             fb = swap_fb(&mut hub75, fb).await;
             return (hub75, fb, ipv4);
         }
@@ -196,42 +199,48 @@ async fn run_display(
     mut hub75: Hub75<esp_hal::Async, FrameBuffer>,
     mut fb: &'static mut FrameBuffer,
     inbox: &'static FrameInbox,
+    brightness: &'static Brightness,
     rgb: &'static mut [u8; FRAME_BYTES],
     ipv4: Ipv4Addr,
 ) -> ! {
     let mut showing_frame = false;
 
     info!("display: showing {HOSTNAME}.local / {ipv4} until first CoAP PUT /frame");
-    scene::draw_net_status(fb, ipv4);
+    scene::draw_net_status(fb, ipv4, brightness.get());
     fb = swap_fb(&mut hub75, fb).await;
 
     loop {
         if showing_frame {
-            match select(inbox.wait_copy_into(rgb), Timer::after(Duration::from_secs(30)))
-                .await
+            match select3(
+                inbox.wait_copy_into(rgb),
+                brightness.wait_changed(),
+                Timer::after(Duration::from_secs(30)),
+            )
+            .await
             {
-                Either::First(()) | Either::Second(()) => {
-                    scene::draw_rgb888(fb, rgb);
+                Either3::First(()) | Either3::Second(()) | Either3::Third(()) => {
+                    scene::draw_rgb888(fb, rgb, brightness.get());
                     fb = swap_fb(&mut hub75, fb).await;
                 }
             }
             continue;
         }
 
-        match select(
+        match select3(
             inbox.wait_copy_into(rgb),
+            brightness.wait_changed(),
             Timer::after(Duration::from_secs(5)),
         )
         .await
         {
-            Either::First(()) => {
+            Either3::First(()) => {
                 info!("display: network frame — leaving status");
                 showing_frame = true;
-                scene::draw_rgb888(fb, rgb);
+                scene::draw_rgb888(fb, rgb, brightness.get());
                 fb = swap_fb(&mut hub75, fb).await;
             }
-            Either::Second(()) => {
-                scene::draw_net_status(fb, ipv4);
+            Either3::Second(()) | Either3::Third(()) => {
+                scene::draw_net_status(fb, ipv4, brightness.get());
                 fb = swap_fb(&mut hub75, fb).await;
             }
         }

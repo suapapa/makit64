@@ -167,9 +167,16 @@ Implementation: `coap-lite` + `src/net/block1.rs` assembler.
 
 | Path | Method | Behavior |
 |------|--------|----------|
-| `/.well-known/core` | GET | `</frame>;rt="makit64.frame";sz=12288` |
+| `/.well-known/core` | GET | Link list (`/frame`, `/brightness`, …) |
 | `/frame` | PUT | RGB888 Block1 → display |
+| `/frame` | GET | `ready` / `no frame` |
+| `/brightness` | GET | Current level as ASCII decimal `0`–`255` |
+| `/brightness` | PUT | Set level: ASCII `0`–`255` or one binary byte; `2.04 Changed` |
 | anything else | — | `4.04 Not Found` |
+
+Brightness scales RGB channels when painting (`c * level / 255`). Changing it
+redraws the current frame (or idle status) immediately; the stored RGB888 inbox
+is not rewritten.
 
 ### Frame handoff
 
@@ -207,6 +214,7 @@ src/
   board.rs
   welcome.rs          # legacy R/G/B/Rainbow helpers
   scene.rs            # draw_rgb888 + status text
+  brightness.rs       # 0–255 level + redraw signal
   frame.rs            # FrameInbox
   net/
     mod.rs
@@ -216,6 +224,7 @@ src/
     mdns.rs           # makit.local
 src/bin/main.rs
 tools/put_frame.py
+tools/set_brightness.py
 docs/PLAN-wifi-coap.md
 ```
 
@@ -257,6 +266,7 @@ docs/PLAN-wifi-coap.md
 - [ ] RGB565 / query `fmt=`
 - [ ] `GET /frame` thumbnail or hash
 - [ ] SoftAP provisioning instead of compile-time SSID
+- [x] `GET|PUT /brightness` (0–255 RGB scale)
 
 ## 8. Test plan
 
