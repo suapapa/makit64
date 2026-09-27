@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "aiocoap>=0.4.7",
+# ]
+# ///
 """Get or set makit64 panel brightness via CoAP.
 
-Requires: pip install aiocoap
-
 Usage:
-  python tools/set_brightness.py              # GET current (0–255)
-  python tools/set_brightness.py 128          # PUT level
-  python tools/set_brightness.py -H 192.168.0.42 64
+  uv run tools/set_brightness.py              # GET current (0–255)
+  uv run tools/set_brightness.py 128          # PUT level
+  uv run tools/set_brightness.py -H 192.168.0.42 64
 """
 
 from __future__ import annotations
@@ -20,7 +24,8 @@ try:
     from aiocoap.numbers.codes import GET, PUT
 except ImportError as e:
     sys.stderr.write(
-        f"Missing dependency: {e}\nInstall with: pip install aiocoap\n"
+        f"Missing dependency: {e}\n"
+        "Run with: uv run tools/set_brightness.py …\n"
     )
     sys.exit(1)
 

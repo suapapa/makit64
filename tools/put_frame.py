@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "aiocoap>=0.4.7",
+#     "pillow>=10",
+# ]
+# ///
 """Resize an image to 64×64 RGB888 and CoAP PUT it to makit64.
 
-Requires: pip install pillow aiocoap
-
 Usage:
-  python tools/put_frame.py tools/tiger.png
-  python tools/put_frame.py -H 192.168.0.42 tools/tiger.png
+  uv run tools/put_frame.py tools/tiger.png
+  uv run tools/put_frame.py -H 192.168.0.42 tools/tiger.png
 """
 
 from __future__ import annotations
@@ -20,7 +25,8 @@ try:
     from PIL import Image
 except ImportError as e:
     sys.stderr.write(
-        f"Missing dependency: {e}\nInstall with: pip install pillow aiocoap\n"
+        f"Missing dependency: {e}\n"
+        "Run with: uv run tools/put_frame.py …\n"
     )
     sys.exit(1)
 

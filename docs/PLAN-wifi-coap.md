@@ -200,8 +200,8 @@ is not rewritten.
 3. Default host: **`makit.local`** (`-H` / `--host` to override).
 
 ```bash
-python tools/put_frame.py tools/tiger.png
-python tools/put_frame.py -H 192.168.0.42 image.png
+uv run tools/put_frame.py tools/tiger.png
+uv run tools/put_frame.py -H 192.168.0.42 image.png
 ```
 
 ## 6. Module / file layout (current)

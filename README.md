@@ -56,12 +56,13 @@ A queries for `makit.local`.
 
 ## Push an image (CoAP PUT)
 
-Status text stays until the first frame arrives.
+Status text stays until the first frame arrives. Host tools need
+[`uv`](https://docs.astral.sh/uv/) (deps resolve from each script’s PEP 723
+metadata — no separate `pip install`).
 
 ```bash
-pip install pillow aiocoap
-python tools/put_frame.py tools/tiger.png                  # → makit.local
-python tools/put_frame.py -H 192.168.x.y your.png          # direct IP
+uv run tools/put_frame.py tools/tiger.png                  # → makit.local
+uv run tools/put_frame.py -H 192.168.x.y your.png          # direct IP
 ```
 
 - Endpoint: `coap://makit.local:5683/frame` (or the panel IP)
@@ -71,10 +72,11 @@ python tools/put_frame.py -H 192.168.x.y your.png          # direct IP
 ## Brightness (CoAP)
 
 ```bash
-python tools/set_brightness.py              # GET current (0–255)
-python tools/set_brightness.py 128          # PUT dim to ~50%
-python tools/set_brightness.py -H 192.168.x.y 255
+uv run tools/set_brightness.py              # GET current (0–255)
+uv run tools/set_brightness.py 128          # PUT dim to ~50%
+uv run tools/set_brightness.py -H 192.168.x.y 255
 ```
+
 
 - Endpoint: `coap://makit.local:5683/brightness`
 - Payload: ASCII decimal `0`–`255` (or a single binary byte)
