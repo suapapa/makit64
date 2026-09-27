@@ -82,14 +82,12 @@ README.md         Build / flash quick start
 ## Commands
 
 ```bash
-# Check / build (Espressif toolchain must be active)
+make build / make flash / make monitor / make run
+# or:
 cargo check
 cargo build --release
+cargo run --release   # espflash flash --monitor (USB auto-reset)
 
-# Flash + serial monitor
-cargo run --release
-
-# Clippy
 cargo clippy --release
 ```
 
@@ -111,6 +109,7 @@ Do not switch this crate to host `stable` for firmware builds.
 ## Networking (Wi-Fi + CoAP + mDNS)
 
 - STA credentials: compile-time from `.env` (`WIFI_SSID`, `WIFI_PASS`).
+- Panel orientation: `DISPLAY_ROTATION` = `0`/`90`/`180`/`270` (clockwise degrees).
 - After DHCP, panel + serial show IPv4; mDNS answers **`makit.local`**
   (`src/net/mdns.rs`, hostname constant `HOSTNAME`).
 - Before DHCP, Hub75 is already running and shows `boot` / `wifi` / `retry` /

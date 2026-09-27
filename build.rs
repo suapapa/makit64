@@ -3,6 +3,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=WIFI_SSID");
     println!("cargo:rerun-if-env-changed=WIFI_PASS");
     println!("cargo:rerun-if-env-changed=COAP_PORT");
+    println!("cargo:rerun-if-env-changed=DISPLAY_ROTATION");
 
     // Prefer shell env; fall back to crate-root `.env` when present.
     let _ = dotenvy::dotenv();
@@ -24,6 +25,14 @@ fn main() {
         panic!("COAP_PORT must be a valid u16 (got {port:?})")
     });
 
+    let rotation = std::env::var("DISPLAY_ROTATION").unwrap_or_else(|_| "0".into());
+    match rotation.as_str() {
+        "0" | "90" | "180" | "270" => {}
+        other => panic!(
+            "DISPLAY_ROTATION must be 0, 90, 180, or 270 (clockwise degrees); got {other:?}"
+        ),
+    }
+
     // Escape is not applied; keep credentials free of newlines.
     if ssid.contains('\n') || ssid.contains('\0') || pass.contains('\n') || pass.contains('\0') {
         panic!("WIFI_SSID / WIFI_PASS must not contain newline or NUL");
@@ -32,4 +41,5 @@ fn main() {
     println!("cargo:rustc-env=WIFI_SSID={ssid}");
     println!("cargo:rustc-env=WIFI_PASS={pass}");
     println!("cargo:rustc-env=COAP_PORT={port}");
+    println!("cargo:rustc-env=DISPLAY_ROTATION={rotation}");
 }

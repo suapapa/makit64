@@ -67,11 +67,12 @@ async fn main(spawner: Spawner) -> ! {
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     info!(
-        "makit64 — {}x{} HUB75E + Wi-Fi/CoAP (refresh ~{} Hz @ {} MHz)",
+        "makit64 — {}x{} HUB75E + Wi-Fi/CoAP (refresh ~{} Hz @ {} MHz, rot={}° CW)",
         PANEL_WIDTH,
         PANEL_HEIGHT,
         esp_hub75::refresh_hz::<FrameBuffer>(PIXEL_CLOCK),
         PIXEL_CLOCK.as_hz() / 1_000_000,
+        makit64::rotate::DEGREES,
     );
 
     let inbox = FRAME_INBOX.init(FrameInbox::new());

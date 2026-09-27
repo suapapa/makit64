@@ -5,6 +5,7 @@ use esp_hub75::Color;
 use esp_hub75::framebuffer::bitplane::plain::DmaFrameBuffer;
 
 use crate::board::{PANEL_HEIGHT, PANEL_WIDTH, SCAN_LINES};
+use crate::rotate::RotatedFb;
 
 pub const PLANES: usize = 6;
 pub type FrameBuffer = DmaFrameBuffer<SCAN_LINES, PANEL_WIDTH, PLANES>;
@@ -46,16 +47,17 @@ impl WelcomePhase {
 ///
 /// `hue_offset` advances the rainbow animation (0..=255).
 pub fn draw_welcome(fb: &mut FrameBuffer, phase: WelcomePhase, hue_offset: u8) {
+    let mut fb = RotatedFb(fb);
     fb.erase();
     match phase {
-        WelcomePhase::Red => fill_solid(fb, Color::new(255, 0, 0)),
-        WelcomePhase::Green => fill_solid(fb, Color::new(0, 255, 0)),
-        WelcomePhase::Blue => fill_solid(fb, Color::new(0, 0, 255)),
-        WelcomePhase::Rainbow => fill_rainbow(fb, hue_offset),
+        WelcomePhase::Red => fill_solid(&mut fb, Color::new(255, 0, 0)),
+        WelcomePhase::Green => fill_solid(&mut fb, Color::new(0, 255, 0)),
+        WelcomePhase::Blue => fill_solid(&mut fb, Color::new(0, 0, 255)),
+        WelcomePhase::Rainbow => fill_rainbow(&mut fb, hue_offset),
     }
 }
 
-fn fill_solid(fb: &mut FrameBuffer, color: Color) {
+fn fill_solid(fb: &mut RotatedFb<'_>, color: Color) {
     for y in 0..PANEL_HEIGHT as i32 {
         for x in 0..PANEL_WIDTH as i32 {
             fb.set_pixel(Point::new(x, y), color);
@@ -63,7 +65,7 @@ fn fill_solid(fb: &mut FrameBuffer, color: Color) {
     }
 }
 
-fn fill_rainbow(fb: &mut FrameBuffer, hue_offset: u8) {
+fn fill_rainbow(fb: &mut RotatedFb<'_>, hue_offset: u8) {
     for y in 0..PANEL_HEIGHT as i32 {
         for x in 0..PANEL_WIDTH as i32 {
             // Diagonal hue sweep so both axes feel alive.

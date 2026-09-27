@@ -14,10 +14,12 @@ use heapless::String;
 use crate::board::{PANEL_HEIGHT, PANEL_WIDTH};
 use crate::frame::FRAME_BYTES;
 use crate::net::HOSTNAME;
+use crate::rotate::RotatedFb;
 use crate::welcome::FrameBuffer;
 
 /// Paint a packed RGB888 buffer (`y`-major, then `x`, 3 bytes per pixel) onto `fb`.
 pub fn draw_rgb888(fb: &mut FrameBuffer, rgb: &[u8; FRAME_BYTES]) {
+    let mut fb = RotatedFb(fb);
     fb.erase();
     for y in 0..PANEL_HEIGHT {
         for x in 0..PANEL_WIDTH {
@@ -30,6 +32,7 @@ pub fn draw_rgb888(fb: &mut FrameBuffer, rgb: &[u8; FRAME_BYTES]) {
 
 /// Two-line centered status (boot / wifi / dhcp / retry).
 pub fn draw_status_lines(fb: &mut FrameBuffer, title: &str, detail: &str) {
+    let mut fb = RotatedFb(fb);
     fb.erase();
 
     let title_style = MonoTextStyleBuilder::new()
@@ -43,15 +46,16 @@ pub fn draw_status_lines(fb: &mut FrameBuffer, title: &str, detail: &str) {
 
     let cx = (PANEL_WIDTH as i32) / 2;
     let _ = Text::with_alignment(title, Point::new(cx, 24), title_style, Alignment::Center)
-        .draw(fb);
+        .draw(&mut fb);
     if !detail.is_empty() {
         let _ = Text::with_alignment(detail, Point::new(cx, 38), detail_style, Alignment::Center)
-            .draw(fb);
+            .draw(&mut fb);
     }
 }
 
 /// Idle screen after DHCP: hostname + IPv4 until the first CoAP frame arrives.
 pub fn draw_net_status(fb: &mut FrameBuffer, ipv4: Ipv4Addr) {
+    let mut fb = RotatedFb(fb);
     fb.erase();
 
     let mut host: String<24> = String::new();
@@ -75,9 +79,10 @@ pub fn draw_net_status(fb: &mut FrameBuffer, ipv4: Ipv4Addr) {
 
     let cx = (PANEL_WIDTH as i32) / 2;
     let _ = Text::with_alignment(host.as_str(), Point::new(cx, 18), host_style, Alignment::Center)
-        .draw(fb);
+        .draw(&mut fb);
     let _ = Text::with_alignment(ip.as_str(), Point::new(cx, 32), ip_style, Alignment::Center)
-        .draw(fb);
-    let _ = Text::with_alignment("PUT /frame", Point::new(cx, 46), hint_style, Alignment::Center)
-        .draw(fb);
+        .draw(&mut fb);
+    let _ =
+        Text::with_alignment("PUT /frame", Point::new(cx, 46), hint_style, Alignment::Center)
+            .draw(&mut fb);
 }

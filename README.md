@@ -23,10 +23,26 @@ cp .env.example .env
 # edit WIFI_SSID / WIFI_PASS
 ```
 
-Credentials are baked in at **compile time** via `build.rs` (`env!("WIFI_SSID")` / `env!("WIFI_PASS")`).  
-`.env` is gitignored — never commit it.
+Credentials and `DISPLAY_ROTATION` (clockwise degrees: `0`/`90`/`180`/`270`) are
+baked in at **compile time** via `build.rs`. `.env` is gitignored — never commit it.
 
 ## Build & flash
+
+```bash
+make build      # release build
+make flash      # build + flash (no log)
+make monitor    # serial log only
+make run        # build + flash + log  (same idea as cargo run --release)
+```
+
+`espflash` resets the ESP32-S3 over native USB (DTR/RTS) — you usually do **not**
+need the BOOT/RESET buttons. If several boards are plugged in:
+
+```bash
+PORT=/dev/cu.usbmodemXXXX make flash
+```
+
+Or use Cargo directly:
 
 ```bash
 cargo build --release
