@@ -86,7 +86,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let tx_descriptors = esp_hub75::hub75_dma_descriptors!(FrameBuffer);
 
-    // Pin map from HARDWARE.md / sch/sch.png (LED_metrix_mcu_ver_rev.1).
+    // Pin map from HARDWARE.md (LED_metrix_mcu_ver_rev.1).
     let pins = Hub75Pins16 {
         red1: peripherals.GPIO42.degrade(),
         grn1: peripherals.GPIO41.degrade(),

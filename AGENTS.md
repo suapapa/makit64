@@ -16,10 +16,9 @@ Hardware source of truth:
 | Doc | Role |
 |-----|------|
 | [`HARDWARE.md`](HARDWARE.md) | Pin map, power, UI |
-| [`sch/sch.png`](sch/sch.png) | EasyEDA schematic |
 | [`src/board.rs`](src/board.rs) | Firmware GPIO constants |
 
-Do **not** invent pin numbers. Change pins only after updating schematic +
+Do **not** invent pin numbers. Change pins only after updating
 `HARDWARE.md` + `board.rs` together.
 
 ## Tech stack
@@ -47,7 +46,6 @@ src/
   scene.rs        RGB888 frame + net-status text draw
   welcome.rs      Legacy R/G/B/Rainbow helpers (optional idle)
   net/            Wi-Fi STA, CoAP server, mDNS (`makit.local`)
-sch/sch.png       Schematic image
 HARDWARE.md       Human-readable hardware doc
 README.md         Build / flash quick start
 .cargo/config.toml  Target, runner, ESP_LOG
@@ -123,7 +121,7 @@ Do not switch this crate to host `stable` for firmware builds.
 
 ## Do not
 
-- Change HUB75 pinout without verifying `sch/sch.png` / `HARDWARE.md`
+- Change HUB75 pinout without verifying `HARDWARE.md` / `board.rs`
 - Enable Wi-Fi/PSRAM paths that fight IRAM without re-validating flicker
 - Commit secrets (`.env`), local `sdkconfig`-style env files, or `target/`
 - Assume panels are 1/16 scan — this board is **1/32** (needs address **E**)

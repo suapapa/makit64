@@ -1,9 +1,10 @@
 # makit64
 
+![makit64](docs/makit64.webp)
+
 ESP32-S3 firmware for a **HUB75E 64×64** LED matrix (`LED_metrix_mcu_ver_rev.1`).
 
 - Hardware notes: [`HARDWARE.md`](HARDWARE.md)
-- Schematic: [`sch/sch.png`](sch/sch.png)
 - Pin constants: [`src/board.rs`](src/board.rs)
 - Agent guide: [`AGENTS.md`](AGENTS.md)
 - Network plan: [`docs/PLAN-wifi-coap.md`](docs/PLAN-wifi-coap.md)

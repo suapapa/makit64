@@ -1,4 +1,4 @@
-//! Pin map for LED_metrix_mcu_ver_rev.1 — see `HARDWARE.md` / `sch/sch.png`.
+//! Pin map for LED_metrix_mcu_ver_rev.1 — see `HARDWARE.md`.
 
 /// HUB75E 64×64 panel geometry.
 pub const PANEL_WIDTH: usize = 64;

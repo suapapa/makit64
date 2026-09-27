@@ -1,7 +1,5 @@
 # Hardware — LED_metrix_mcu_ver_rev.1
 
-Source schematic: [`sch/sch.png`](sch/sch.png) (EasyEDA, 2026-08-03).
-
 ESP32-S3 board that drives a **HUB75E 64×64** (1/32 scan) LED matrix through **3.3V → 5V** level shifting.
 
 ## Block overview
