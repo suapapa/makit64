@@ -7,6 +7,7 @@ rustflags = [
 
 [env]
 ESP_LOG="info"
+ESP_RADIO_CONFIG_EVENT_CHANNEL_CAPACITY="16"
 
 [build]
 target = "xtensa-esp32s3-none-elf"

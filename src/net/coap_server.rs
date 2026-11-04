@@ -9,7 +9,7 @@ use coap_lite::{
 };
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::Stack;
-use embassy_time::{Duration, Instant};
+use embassy_time::{with_timeout, Duration, Instant};
 use log::{info, warn};
 
 use crate::brightness::Brightness;
@@ -143,8 +143,10 @@ pub async fn coap_task(
         if let Some(response) = reply {
             match response.message.to_bytes() {
                 Ok(bytes) => {
-                    if let Err(e) = socket.send_to(&bytes, src).await {
-                        warn!("coap: send error: {e:?}");
+                    match with_timeout(Duration::from_secs(2), socket.send_to(&bytes, src)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => warn!("coap: send error: {e:?}"),
+                        Err(_) => warn!("coap: send_to timed out to {src}"),
                     }
                 }
                 Err(e) => warn!("coap: encode error: {e:?}"),
@@ -269,7 +271,7 @@ async fn handle_put_frame(
     publish: &mut [u8; FRAME_BYTES],
     inbox: &FrameInbox,
 ) -> Option<coap_lite::CoapResponse> {
-    let payload = request.message.payload.clone();
+    let payload = core::mem::take(&mut request.message.payload);
     let block1 = request
         .message
         .get_option(CoapOption::Block1)

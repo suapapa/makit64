@@ -3,15 +3,16 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_executor::Spawner;
+use embassy_futures::select::select;
 use embassy_net::{Config, Runner, Stack, StackResources};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
 use esp_hal::peripherals::WIFI;
 use esp_hal::rng::Rng;
 use esp_radio::wifi::{
     AuthenticationMethodConfig, Config as WifiConfig, Interface, WifiController,
 };
 use esp_radio::wifi::sta::StationConfig;
-use log::{error, info};
+use log::{error, info, warn};
 use static_cell::StaticCell;
 
 const WIFI_SSID: &str = env!("WIFI_SSID");
@@ -127,25 +128,56 @@ pub async fn wifi_task(mut controller: WifiController<'static>) {
 
     loop {
         WifiPhase::Connecting.store();
-        match controller.connect_async().await {
-            Ok(info) => {
+        match with_timeout(Duration::from_secs(20), controller.connect_async()).await {
+            Ok(Ok(info)) => {
                 WifiPhase::Connected.store();
                 info!(
                     "wifi: connected ssid={:?} channel={}",
                     info.ssid, info.channel
                 );
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 WifiPhase::Retrying.store();
                 error!("wifi: connect failed: {e:?}");
                 Timer::after(Duration::from_secs(5)).await;
                 continue;
             }
+            Err(_) => {
+                if controller.is_connected() {
+                    WifiPhase::Connected.store();
+                    info!("wifi: connected (detected via state poll after event timeout)");
+                } else {
+                    WifiPhase::Retrying.store();
+                    warn!("wifi: connect_async timed out — resetting association");
+                    let _ = with_timeout(
+                        Duration::from_secs(2),
+                        controller.disconnect_async(),
+                    )
+                    .await;
+                    Timer::after(Duration::from_secs(2)).await;
+                    continue;
+                }
+            }
         }
 
-        let _ = controller.wait_for_disconnect_async().await;
+        // Race event-driven disconnect notification against periodic state polling
+        // so a dropped or raced `StationDisconnected` event can never wedge `wifi_task`.
+        let _ = select(
+            controller.wait_for_disconnect_async(),
+            poll_disconnected(&controller),
+        )
+        .await;
         WifiPhase::Retrying.store();
         info!("wifi: disconnected — reconnecting");
         Timer::after(Duration::from_millis(500)).await;
+    }
+}
+
+async fn poll_disconnected(controller: &WifiController<'static>) {
+    loop {
+        Timer::after(Duration::from_secs(1)).await;
+        if !controller.is_connected() {
+            return;
+        }
     }
 }

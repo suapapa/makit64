@@ -10,17 +10,19 @@
 use core::net::Ipv4Addr;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select, select3, Either3};
 use embassy_net::Stack;
-use embassy_time::{Duration, Timer};
+use embassy_time::{with_timeout, Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Pin;
+use esp_hal::interrupt::Priority;
+use esp_hal::peripherals::TIMG0;
 use esp_hal::ram;
 use esp_hal::time::Rate;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::timer::timg::{MwdtStage, TimerGroup, Wdt};
 use esp_hub75::{Hub75, Hub75Config, Hub75Pins16};
-use log::info;
+use log::{error, info, warn};
 use makit64::board::{self, PANEL_HEIGHT, PANEL_WIDTH};
 use makit64::brightness::Brightness;
 use makit64::frame::{FrameInbox, FRAME_BYTES};
@@ -66,7 +68,15 @@ async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(size: 32 * 1024);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let mut wdt = timg0.wdt;
+    wdt.set_timeout(
+        MwdtStage::Stage0,
+        esp_hal::time::Duration::from_secs(30),
+    );
+    wdt.enable();
+
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    spawner.spawn(wdt_task(wdt).expect("spawn wdt_task"));
 
     info!(
         "makit64 — {}x{} HUB75E + Wi-Fi/CoAP (refresh ~{} Hz @ {} MHz, rot={}° CW)",
@@ -109,7 +119,9 @@ async fn main(spawner: Spawner) -> ! {
         pins,
         peripherals.DMA_CH0,
         tx_descriptors,
-        Hub75Config::new().with_frequency(PIXEL_CLOCK),
+        Hub75Config::new()
+            .with_frequency(PIXEL_CLOCK)
+            .with_interrupt_priority(Priority::Priority3),
         &*fb0,
     )
     .expect("Hub75 init failed");
@@ -127,18 +139,44 @@ async fn main(spawner: Spawner) -> ! {
     spawner
         .spawn(coap_task(stack, inbox, brightness).expect("spawn coap_task"));
     spawner
-        .spawn(mdns_task(stack, ipv4).expect("spawn mdns_task"));
+        .spawn(mdns_task(stack).expect("spawn mdns_task"));
 
-    run_display(hub75, fb, inbox, brightness, rgb, ipv4).await
+    run_display(hub75, fb, stack, inbox, brightness, rgb, ipv4).await
+}
+
+#[embassy_executor::task]
+async fn wdt_task(mut wdt: Wdt<TIMG0<'static>>) -> ! {
+    loop {
+        wdt.feed();
+        Timer::after(Duration::from_secs(5)).await;
+    }
 }
 
 async fn swap_fb(
     hub75: &mut Hub75<esp_hal::Async, FrameBuffer>,
     fb: &'static mut FrameBuffer,
 ) -> &'static mut FrameBuffer {
-    let mut xfer = hub75.swap(fb).expect("swap");
-    xfer.wait_for_done().await;
-    xfer.wait().expect("dma")
+    let mut xfer = match hub75.swap(fb) {
+        Ok(xfer) => xfer,
+        Err((e, fb)) => {
+            warn!("hub75: swap error: {e:?}");
+            return fb;
+        }
+    };
+    if with_timeout(Duration::from_secs(1), xfer.wait_for_done())
+        .await
+        .is_err()
+    {
+        error!("hub75: DMA pass boundary timed out — resetting system");
+        esp_hal::system::software_reset();
+    }
+    match xfer.wait() {
+        Ok(old_fb) => old_fb,
+        Err((e, _fb)) => {
+            error!("hub75: DMA transfer error ({e:?}) — resetting system");
+            esp_hal::system::software_reset();
+        }
+    }
 }
 
 /// Redraw Wi‑Fi / DHCP phase on the panel until an IPv4 address appears.
@@ -198,10 +236,11 @@ async fn wait_dhcp_with_status(
 async fn run_display(
     mut hub75: Hub75<esp_hal::Async, FrameBuffer>,
     mut fb: &'static mut FrameBuffer,
+    stack: Stack<'static>,
     inbox: &'static FrameInbox,
     brightness: &'static Brightness,
     rgb: &'static mut [u8; FRAME_BYTES],
-    ipv4: Ipv4Addr,
+    mut ipv4: Ipv4Addr,
 ) -> ! {
     let mut showing_frame = false;
 
@@ -211,18 +250,11 @@ async fn run_display(
 
     loop {
         if showing_frame {
-            match select3(
-                inbox.wait_copy_into(rgb),
-                brightness.wait_changed(),
-                Timer::after(Duration::from_secs(30)),
-            )
-            .await
-            {
-                Either3::First(()) | Either3::Second(()) | Either3::Third(()) => {
-                    scene::draw_rgb888(fb, rgb, brightness.get());
-                    fb = swap_fb(&mut hub75, fb).await;
-                }
-            }
+            // `circular-dma` refreshes the panel in hardware without CPU intervention.
+            // Only arm a pass-boundary swap when the frame or brightness actually changes.
+            let _ = select(inbox.wait_copy_into(rgb), brightness.wait_changed()).await;
+            scene::draw_rgb888(fb, rgb, brightness.get());
+            fb = swap_fb(&mut hub75, fb).await;
             continue;
         }
 
@@ -239,9 +271,23 @@ async fn run_display(
                 scene::draw_rgb888(fb, rgb, brightness.get());
                 fb = swap_fb(&mut hub75, fb).await;
             }
-            Either3::Second(()) | Either3::Third(()) => {
+            Either3::Second(()) => {
+                if let Some(cfg) = stack.config_v4() {
+                    ipv4 = cfg.address.address();
+                }
                 scene::draw_net_status(fb, ipv4, brightness.get());
                 fb = swap_fb(&mut hub75, fb).await;
+            }
+            Either3::Third(()) => {
+                if let Some(cfg) = stack.config_v4() {
+                    let live_ip = cfg.address.address();
+                    if live_ip != ipv4 {
+                        ipv4 = live_ip;
+                        info!("display: IPv4 updated → {ipv4}");
+                        scene::draw_net_status(fb, ipv4, brightness.get());
+                        fb = swap_fb(&mut hub75, fb).await;
+                    }
+                }
             }
         }
     }
